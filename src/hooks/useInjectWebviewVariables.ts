@@ -14,6 +14,7 @@ export function useInjectWebViewVariables() {
       enableSelection,
       locations,
       initialAnnotations,
+      initialLocation,
       allowScriptedContent,
       allowPopups,
       manager,
@@ -45,6 +46,7 @@ export function useInjectWebViewVariables() {
       enableSelection: boolean;
       locations?: ePubCfi[];
       initialAnnotations?: any[];
+      initialLocation?: string;
       allowScriptedContent?: boolean;
       allowPopups?: boolean;
       manager: Manager;
@@ -78,6 +80,13 @@ export function useInjectWebViewVariables() {
           `const initialAnnotations = ${JSON.stringify(initialAnnotations)};`
         )
         .replace(
+          /const initialLocation = window.initialLocation;/,
+          `const initialLocation = ${typeof initialLocation === 'string'
+            ? `'${initialLocation}'`
+            : undefined
+          };`
+        )
+        .replace(
           /const enableSelection = window.enable_selection;/,
           `const enableSelection = ${enableSelection};`
         )
@@ -86,16 +95,16 @@ export function useInjectWebViewVariables() {
           `allowScriptedContent: ${allowScriptedContent}`
         )
         .replace(/allowPopups: allowPopups/, `allowPopups: ${allowPopups}`)
-        .replace(/manager: "default"/, `manager: ${JSON.stringify(manager)}`)
-        .replace(/flow: "auto"/, `flow: ${JSON.stringify(flow)}`)
-        .replace(/snap: undefined/, `snap: ${snap ?? undefined}`)
+        .replace(/const manager = window.manager;/, `const manager = ${JSON.stringify(manager)};`)
+        .replace(/const flow = window.flow;/, `const flow = ${JSON.stringify(flow)};`)
+        .replace(/const snap = window.snap;/, `const snap = ${snap ?? undefined};`)
         .replace(
-          /spread: undefined/,
-          `spread: ${spread ? JSON.stringify(spread) : undefined}`
+          /const spread = window.spread;/,
+          `const spread = ${spread ? JSON.stringify(spread) : undefined};`
         )
-        .replace(/fullsize: undefined/, `fullsize: ${fullsize ?? undefined}`)
+        .replace(/const fullsize = window.fullsize;/, `const fullsize = ${fullsize ?? undefined};`)
         .replace(
-          /book\.locations\.generate\(1600\)/,
+          /book\.locations\.generate\(2000\)/,
           `book.locations.generate(${charactersPerLocation})`
         );
     },

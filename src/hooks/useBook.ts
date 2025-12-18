@@ -59,6 +59,9 @@ enum Types {
     SET_LANDMARKS = 'SET_LANDMARKS',
     SET_BOOKMARKS = 'SET_BOOKMARKS',
     SET_FLOW = 'SET_FLOW',
+    ADD_BOOKMARK = 'ADD_BOOKMARK',
+    REMOVE_BOOKMARK = 'REMOVE_BOOKMARK',
+    UPDATE_BOOKMARK = 'UPDATE_BOOKMARK',
 }
 
 type BookPayload = {
@@ -91,6 +94,9 @@ type BookPayload = {
     [Types.SET_LANDMARKS]: Landmark[];
     [Types.SET_BOOKMARKS]: Bookmark[];
     [Types.SET_FLOW]: Flow;
+    [Types.ADD_BOOKMARK]: Bookmark;
+    [Types.REMOVE_BOOKMARK]: Bookmark;
+    [Types.UPDATE_BOOKMARK]: Bookmark;
 };
 
 type BookActions = ActionMap<BookPayload>[keyof ActionMap<BookPayload>];
@@ -297,6 +303,25 @@ function bookReducer(state: InitialState, action: BookActions): InitialState {
                 ...state,
                 flow: action.payload,
             };
+        case Types.ADD_BOOKMARK:
+            return {
+                ...state,
+                bookmarks: [...state.bookmarks, action.payload],
+            };
+        case Types.REMOVE_BOOKMARK:
+            return {
+                ...state,
+                bookmarks: state.bookmarks.filter(
+                    (item) => item.id !== action.payload.id
+                ),
+            };
+        case Types.UPDATE_BOOKMARK:
+            return {
+                ...state,
+                bookmarks: state.bookmarks.map((item) =>
+                    item.id === action.payload.id ? action.payload : item
+                ),
+            };
         default:
             return state;
     }
@@ -306,7 +331,8 @@ export type UseBookProps = {
     initialTheme?: Theme;
     initialBookmarks?: Bookmark[];
     initialAnnotations?: Annotation[];
-    initialLocations?: ePubCfi[];
+    cachedLocations?: ePubCfi[];
+    initialLocation?: string;
     initialFlow?: Flow;
 };
 
@@ -314,15 +340,16 @@ export function useBook({
     initialTheme: initTheme = defaultTheme,
     initialBookmarks = [],
     initialAnnotations = [],
-    initialLocations = [],
+    cachedLocations = [],
     initialFlow = 'paginated',
+    initialLocation,
 }: UseBookProps = {}) {
     const [state, dispatch] = useReducer(bookReducer, {
         ...initialState,
         theme: initTheme,
         bookmarks: initialBookmarks,
         annotations: initialAnnotations,
-        locations: initialLocations,
+        locations: cachedLocations,
         flow: initialFlow,
     });
     const book = useRef<WebView | null>(null);
@@ -799,12 +826,24 @@ export function useBook({
         dispatch({ type: Types.SET_FLOW, payload: flow });
     }, []);
 
-    const setFlow = useCallback((flow: Flow) => {
-        dispatch({ type: Types.SET_FLOW, payload: flow });
+    const addBookmark = useCallback((bookmark: Bookmark) => {
+        dispatch({ type: Types.ADD_BOOKMARK, payload: bookmark });
+    }, []);
+
+    const removeBookmark = useCallback((bookmark: Bookmark) => {
+        dispatch({ type: Types.REMOVE_BOOKMARK, payload: bookmark });
+    }, []);
+
+    const updateBookmark = useCallback((bookmark: Bookmark) => {
+        dispatch({ type: Types.UPDATE_BOOKMARK, payload: bookmark });
     }, []);
 
     return {
+        ...state,
         registerBook,
+        changeTheme,
+        changeFontSize,
+        changeFontFamily,
         setAtStart,
         setAtEnd,
         setTotalLocations,
@@ -814,60 +853,32 @@ export function useBook({
         setLocations,
         setIsLoading,
         setIsRendering,
-
         goToLocation,
         goPrevious,
         goNext,
         getLocations,
         getCurrentLocation,
         getMeta,
-
         search,
         clearSearchResults,
         setIsSearching,
-
-        setKey,
-        bookKey: state.bookKey,
-
-        changeTheme,
-        changeFontFamily,
-        changeFontSize,
-        theme: state.theme,
-
-        atStart: state.atStart,
-        atEnd: state.atEnd,
-        totalLocations: state.totalLocations,
-        currentLocation: state.currentLocation,
-        meta: state.meta,
-        progress: state.progress,
-        locations: state.locations,
-        isLoading: state.isLoading,
-        isRendering: state.isRendering,
-
-        isSearching: state.isSearching,
-        searchResults: state.searchResults,
         setSearchResults,
-
-        removeSelection,
-
-        manageAnnotation, // New unified function
+        manageAnnotation,
         setAnnotations,
         setInitialAnnotations,
-        annotations: state.annotations,
-
         setSection,
         setToc,
         setLandmarks,
-        section: state.section,
-        toc: state.toc,
-        landmarks: state.landmarks,
-
         setBookmarks,
-        bookmarks: state.bookmarks,
+        setKey,
         isBookmarked,
+        removeSelection,
         injectJavascript,
         changeFlow,
-        setFlow,
-        flow: state.flow,
+        setFlow: changeFlow,
+        addBookmark,
+        removeBookmark,
+        updateBookmark,
+        initialLocation,
     };
 }

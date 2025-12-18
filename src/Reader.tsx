@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Platform } from 'react-native';
+import { Platform, View as RNView, Text } from 'react-native';
 import { LoadingFile } from './utils/LoadingFile';
 import type { ReaderProps } from './types';
 import { View } from './View';
@@ -19,7 +19,7 @@ export function Reader({
   width = '100%',
   height = '100%',
   defaultTheme = initialTheme,
-  initialLocations,
+  cachedLocations,
   allowScriptedContent = Platform.OS === 'ios',
   onPressExternalLink,
   renderLoadingFileComponent = (props) => (
@@ -43,6 +43,7 @@ export function Reader({
     error: downloadError,
     documentDirectory,
     writeAsStringAsync,
+    getFileInfo,
   } = useFileSystem();
   const enableSelection = menuItems ? true : rest.enableSelection || false;
   const allowPopups = onPressExternalLink ? true : rest.allowPopups || false;
@@ -103,159 +104,189 @@ export function Reader({
     changeFontSize,
     changeFlow,
     bookKey,
+    addBookmark,
+    removeBookmark,
+    updateBookmark,
+    initialLocation: contextInitialLocation,
   } = useBookContext();
   const { injectWebViewVariables } = useInjectWebViewVariables();
   const [template, setTemplate] = useState<string | null>(null);
   const [templateUrl, setTemplateUrl] = useState<string | null>(null);
   const [allowedUris, setAllowedUris] = useState<string | null>(null);
   const [initialAnnotations] = useState(annotations);
+  const [error, setError] = useState<string | null>(null);
+
+  const initialLocation = rest.initialLocation || contextInitialLocation;
 
   useEffect(() => {
     (async () => {
+      setError(null);
       setIsLoading(true);
+
+      if (!documentDirectory) {
+        return;
+      }
 
       const jszipFileUri = `${documentDirectory}/jszip.min.js`;
       const epubjsFileUri = `${documentDirectory}/epub.min.js`;
-      try {
-        await writeAsStringAsync(jszipFileUri, jszip);
-      } catch (e) {
-        throw new Error('failed to write jszip js file');
-      }
 
       try {
-        await writeAsStringAsync(epubjsFileUri, epubjs);
+        const jszipInfo = await getFileInfo(jszipFileUri);
+        if (!jszipInfo.exists) {
+          try {
+            await writeAsStringAsync(jszipFileUri, jszip);
+          } catch (e) {
+            throw new Error('failed to write jszip js file');
+          }
+        }
+
+        const epubjsInfo = await getFileInfo(epubjsFileUri);
+        if (!epubjsInfo.exists) {
+          try {
+            await writeAsStringAsync(epubjsFileUri, epubjs);
+          } catch (e) {
+            throw new Error('failed to write epubjs js file');
+          }
+        }
+
+        setAllowedUris(`${jszipFileUri},${epubjsFileUri}`);
+
+        console.log('Reader initialization:', { src, documentDirectory, jszipFileUri });
+
+        if (src) {
+          const sourceType = getSourceType(src);
+          const isExternalSource = isURL(src);
+          const isSrcInFs = isFsUri(src);
+
+          if (!sourceType) {
+            throw new Error(`Invalid source type: ${src}`);
+          }
+
+          if (!isExternalSource) {
+            if (isSrcInFs) {
+              setAllowedUris(`${src}${jszipFileUri},${epubjsFileUri}`);
+            }
+            if (sourceType === SourceType.BASE64) {
+              // -- DIRECT INJECTION --
+              // We pass variables like `initialAnnotations` here. They become part of the `template` HTML string.
+              // This ensures they are available immediately when the WebView loads, avoiding "flash of unstyled content".
+              setTemplate(
+                injectWebViewVariables({
+                  jszip: jszipFileUri,
+                  epubjs: epubjsFileUri,
+                  type: SourceType.BASE64,
+                  book: src,
+                  theme: defaultTheme,
+                  locations: cachedLocations,
+                  enableSelection,
+                  allowScriptedContent,
+                  allowPopups,
+                  manager,
+                  flow,
+                  snap,
+                  spread,
+                  fullsize,
+                  charactersPerLocation,
+                  initialAnnotations,
+                  initialLocation,
+                })
+              );
+
+              setIsLoading(false);
+            } else {
+              setTemplate(
+                injectWebViewVariables({
+                  jszip: jszipFileUri,
+                  epubjs: epubjsFileUri,
+                  type: SourceType.BINARY,
+                  book: src,
+                  theme: defaultTheme,
+                  locations: cachedLocations,
+                  enableSelection,
+                  allowScriptedContent,
+                  allowPopups,
+                  manager,
+                  flow,
+                  snap,
+                  spread,
+                  fullsize,
+                  charactersPerLocation,
+                  initialAnnotations,
+                  initialLocation,
+                })
+              );
+
+              setIsLoading(false);
+            }
+          }
+
+          if (isExternalSource) {
+            const sourceName = getSourceName(src);
+
+            if (!sourceName) {
+              throw new Error(`Invalid source name: ${src}`);
+            }
+
+            if (sourceType === SourceType.OPF || sourceType === SourceType.EPUB) {
+              setTemplate(
+                injectWebViewVariables({
+                  jszip: jszipFileUri,
+                  epubjs: epubjsFileUri,
+                  type: sourceType,
+                  book: src,
+                  theme: defaultTheme,
+                  locations: cachedLocations,
+                  enableSelection,
+                  allowScriptedContent,
+                  allowPopups,
+                  manager,
+                  flow,
+                  snap,
+                  spread,
+                  fullsize,
+                  charactersPerLocation,
+                  initialAnnotations,
+                  initialLocation,
+                })
+              );
+
+              setIsLoading(false);
+            } else {
+              const { uri: bookFileUri } = await downloadFile(src, sourceName);
+
+              if (!bookFileUri) throw new Error("Couldn't download book");
+
+              setAllowedUris(`${bookFileUri},${jszipFileUri},${epubjsFileUri}`);
+
+              setTemplate(
+                injectWebViewVariables({
+                  jszip: jszipFileUri,
+                  epubjs: epubjsFileUri,
+                  type: sourceType,
+                  book: bookFileUri,
+                  theme: defaultTheme,
+                  locations: cachedLocations,
+                  enableSelection,
+                  allowScriptedContent,
+                  allowPopups,
+                  manager,
+                  flow,
+                  snap,
+                  spread,
+                  fullsize,
+                  charactersPerLocation,
+                  initialAnnotations,
+                  initialLocation,
+                })
+              );
+
+              setIsLoading(false);
+            }
+          }
+        }
       } catch (e) {
-        throw new Error('failed to write epubjs js file');
-      }
-
-      setAllowedUris(`${jszipFileUri},${epubjsFileUri}`);
-
-      if (src) {
-        const sourceType = getSourceType(src);
-        const isExternalSource = isURL(src);
-        const isSrcInFs = isFsUri(src);
-
-        if (!sourceType) {
-          throw new Error(`Invalid source type: ${src}`);
-        }
-
-        if (!isExternalSource) {
-          if (isSrcInFs) {
-            setAllowedUris(`${src}${jszipFileUri},${epubjsFileUri}`);
-          }
-          if (sourceType === SourceType.BASE64) {
-            // -- DIRECT INJECTION --
-            // We pass variables like `initialAnnotations` here. They become part of the `template` HTML string.
-            // This ensures they are available immediately when the WebView loads, avoiding "flash of unstyled content".
-            setTemplate(
-              injectWebViewVariables({
-                jszip: jszipFileUri,
-                epubjs: epubjsFileUri,
-                type: SourceType.BASE64,
-                book: src,
-                theme: defaultTheme,
-                locations: initialLocations,
-                enableSelection,
-                allowScriptedContent,
-                allowPopups,
-                manager,
-                flow,
-                snap,
-                spread,
-                fullsize,
-                charactersPerLocation,
-                initialAnnotations,
-              })
-            );
-
-            setIsLoading(false);
-          } else {
-            setTemplate(
-              injectWebViewVariables({
-                jszip: jszipFileUri,
-                epubjs: epubjsFileUri,
-                type: SourceType.BINARY,
-                book: src,
-                theme: defaultTheme,
-                locations: initialLocations,
-                enableSelection,
-                allowScriptedContent,
-                allowPopups,
-                manager,
-                flow,
-                snap,
-                spread,
-                fullsize,
-                charactersPerLocation,
-                initialAnnotations,
-              })
-            );
-
-            setIsLoading(false);
-          }
-        }
-
-        if (isExternalSource) {
-          const sourceName = getSourceName(src);
-
-          if (!sourceName) {
-            throw new Error(`Invalid source name: ${src}`);
-          }
-
-          if (sourceType === SourceType.OPF || sourceType === SourceType.EPUB) {
-            setTemplate(
-              injectWebViewVariables({
-                jszip: jszipFileUri,
-                epubjs: epubjsFileUri,
-                type: sourceType,
-                book: src,
-                theme: defaultTheme,
-                locations: initialLocations,
-                enableSelection,
-                allowScriptedContent,
-                allowPopups,
-                manager,
-                flow,
-                snap,
-                spread,
-                fullsize,
-                charactersPerLocation,
-                initialAnnotations,
-              })
-            );
-
-            setIsLoading(false);
-          } else {
-            const { uri: bookFileUri } = await downloadFile(src, sourceName);
-
-            if (!bookFileUri) throw new Error("Couldn't download book");
-
-            setAllowedUris(`${bookFileUri},${jszipFileUri},${epubjsFileUri}`);
-
-            setTemplate(
-              injectWebViewVariables({
-                jszip: jszipFileUri,
-                epubjs: epubjsFileUri,
-                type: sourceType,
-                book: bookFileUri,
-                theme: defaultTheme,
-                locations: initialLocations,
-                enableSelection,
-                allowScriptedContent,
-                allowPopups,
-                manager,
-                flow,
-                snap,
-                spread,
-                fullsize,
-                charactersPerLocation,
-                initialAnnotations,
-              })
-            );
-
-            setIsLoading(false);
-          }
-        }
+        setError(e instanceof Error ? e.message : 'An error occurred while loading the book');
+        setIsLoading(false);
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -264,14 +295,14 @@ export function Reader({
     allowScriptedContent,
     defaultTheme,
     documentDirectory,
-    downloadFile,
+    // downloadFile, // Removing to avoid loop
     enableSelection,
-    initialLocations,
+    cachedLocations,
     injectWebViewVariables,
     setIsLoading,
     src,
-    // ! Causing unknown loop
-    // writeAsStringAsync,
+    initialLocation,
+    // writeAsStringAsync, // Removing to avoid loop
   ]);
 
   useEffect(() => {
@@ -285,13 +316,21 @@ export function Reader({
           setTemplateUrl(fileUri);
         }
       } catch (error) {
-        throw new Error('Error saving index.html file:');
+        setError('Error saving index.html file');
       }
     };
     if (template) {
       saveTemplateFileToDoc();
     }
   }, [documentDirectory, template, writeAsStringAsync]);
+
+  if (error) {
+    return (
+      <RNView style={{ width, height, justifyContent: 'center', alignItems: 'center' }}>
+        <Text>Error loading book: {error}</Text>
+      </RNView>
+    );
+  }
 
   if (isLoading) {
     return renderLoadingFileComponent({
@@ -379,6 +418,9 @@ export function Reader({
       changeFontSize={changeFontSize}
       changeFlow={changeFlow}
       bookKey={bookKey}
+      addBookmark={addBookmark}
+      removeBookmark={removeBookmark}
+      updateBookmark={updateBookmark}
       {...rest}
     />
   );

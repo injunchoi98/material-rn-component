@@ -216,7 +216,7 @@ export interface ReaderProps {
    * />
    * ```
    */
-  initialLocations?: ePubCfi[];
+  cachedLocations?: ePubCfi[];
   /**
    * Called once the book loads is started
    * @returns {void} void
@@ -323,28 +323,8 @@ export interface ReaderProps {
     toc: Toc;
     landmarks: Landmark[];
   }) => void;
-  /**
-   * Called when the book was pressed
-   * @deprecated use **onSingleTap** instead
-   */
-  onPress?: () => void;
-  /**
-   * Called when book is tapped once
-   */
-  onSingleTap?: () => void;
-  /**
-   * Called when the book was double pressed
-   * @deprecated use **onDoubleTap** instead
-   */
-  onDoublePress?: () => void;
-  /**
-   * Called when book is tapped twice
-   */
-  onDoubleTap?: () => void;
-  /**
-   * Called when book is long pressed
-   */
-  onLongPress?: () => void;
+
+
   width?: DimensionValue;
   height?: DimensionValue;
   /**
@@ -366,16 +346,7 @@ export interface ReaderProps {
    * @returns {void} void
    */
   onSwipeRight?: () => void;
-  /**
-   * Called when swipe up gesture is detected
-   * @returns {void} void
-   */
-  onSwipeUp?: () => void;
-  /**
-   * Called when swipe down gesture is detected
-   * @returns {void} void
-   */
-  onSwipeDown?: () => void;
+
   /**
    * Render when the book is loading
    * @returns {JSX.Element} JSX.Element
@@ -581,4 +552,8 @@ export interface BookResult {
       location?: Location;
     }
   ) => void;
+  addBookmark: (bookmark: Bookmark) => void;
+  removeBookmark: (bookmark: Bookmark) => void;
+  updateBookmark: (bookmark: Bookmark) => void;
+  initialLocation?: string;
 }

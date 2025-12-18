@@ -11,8 +11,12 @@ export default `
     <script id="epubjs"></script>
 
     <style type="text/css">
-      body {
+      html, body {
         margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
       }
 
       #viewer {
@@ -86,39 +90,65 @@ export default `
        * Flag to enable or disable text selection in the WebView.
        */
       const enableSelection = window.enable_selection;
+      /**
+       * @type {string | undefined}
+       * Initial CFI location to display immediately.
+       */
+      const initialLocation = window.initialLocation;
+      const manager = window.manager;
+      const flow = window.flow;
+      const snap = window.snap;
+      const spread = window.spread;
+      const fullsize = window.fullsize;
+
+      // Helper to send messages safely to RN
+      const reactNativeWebview = window.ReactNativeWebView !== undefined && window.ReactNativeWebView!== null ? window.ReactNativeWebView: window;
+      reactNativeWebview.postMessage(JSON.stringify({ type: "onStarted" }));
+
+      window.onerror = function(message, source, lineno, colno, error) {
+        reactNativeWebview.postMessage(JSON.stringify({
+          type: "onDisplayError",
+          reason: "Global Error: " + message + " at " + lineno + ":" + colno
+        }));
+      };
 
       if (!file) {
         alert('Failed load book');
       }
 
+      reactNativeWebview.postMessage(JSON.stringify({ type: "debug", message: "Starting initialization", file: file, fileType: type }));
+
       // -- Initialization --
       let book;
       let rendition;
 
-      if (type === 'epub' || type === 'opf' || type === 'binary') {
-        book = ePub(file);
-      } else if (type === 'base64') {
-        book = ePub(file, { encoding: "base64" });
-      } else {
-        alert('Missing file type');
+      try {
+        if (type === 'epub' || type === 'opf' || type === 'binary') {
+          book = ePub(file);
+        } else if (type === 'base64') {
+          book = ePub(file, { encoding: "base64" });
+        } else {
+          throw new Error('Invalid file type: ' + type);
+        }
+
+        // Render to the "viewer" div
+        rendition = book.renderTo("viewer", {
+          width: "100%",
+          height: "100%",
+          manager: manager,
+          flow: flow,
+          snap: snap,
+          spread: spread,
+          fullsize: fullsize,
+          allowPopups: allowPopups,
+          allowScriptedContent: allowScriptedContent
+        });
+      } catch (e) {
+        reactNativeWebview.postMessage(JSON.stringify({
+          type: "onDisplayError",
+          reason: e?.message || e
+        }));
       }
-
-      // Render to the "viewer" div
-      rendition = book.renderTo("viewer", {
-        width: "100%",
-        height: "100%",
-        manager: "default",
-        flow: "auto",
-        snap: undefined,
-        spread: undefined,
-        fullsize: undefined,
-        allowPopups: allowPopups,
-        allowScriptedContent: allowScriptedContent
-      });
-
-     // Helper to send messages safely to RN
-     const reactNativeWebview = window.ReactNativeWebView !== undefined && window.ReactNativeWebView!== null ? window.ReactNativeWebView: window;
-      reactNativeWebview.postMessage(JSON.stringify({ type: "onStarted" }));
 
       /**
        * Helper: Flattens the recursive TOC structure into a linear array
@@ -131,7 +161,8 @@ export default `
         const [_, id] = href.split('#')
         let section = book.spine.get(href.split('/')[1]) || book.spine.get(href) || book.spine.get(href.split('/').slice(1).join('/'))
 
-        const el = (id ? section.document.getElementById(id) : section.document.body)
+        const el = section?.document ? (id ? section.document.getElementById(id) : section.document.body) : null;
+        if (!el) return null;
         return section.cfiFromElement(el)
       }
 
@@ -143,7 +174,10 @@ export default `
                   return book.canonical(chapter.href).includes(locationHref)
               }, null)
               .reduce((result, chapter) => {
-                  const locationAfterChapter = ePub.CFI.prototype.compare(location.start.cfi, getCfiFromHref(book, chapter.href)) > 0
+                  const chapterCfi = getCfiFromHref(book, chapter.href);
+                  if (!chapterCfi) return result;
+                  
+                  const locationAfterChapter = ePub.CFI.prototype.compare(location.start.cfi, chapterCfi) > 0
                   return locationAfterChapter ? chapter : result
               }, null);
 
@@ -200,25 +234,39 @@ export default `
         });
       }
 
+      function getProgress(location) {
+        if (book.locations.total > 0) {
+          return book.locations.percentageFromCfi(location.start.cfi);
+        }
+        if (book.spine && book.spine.length > 0 && location.start.index !== undefined) {
+             if (book.spine.length === 1) return 0;
+             return location.start.index / (book.spine.length - 1);
+        }
+        return 0;
+      }
+
       book.ready
         .then(function () {
+          reactNativeWebview.postMessage(JSON.stringify({ type: "debug", message: "Book ready resolved" }));
           if (initialLocations) {
             return book.locations.load(initialLocations);
           }
 
-          book.locations.generate(1600).then(function () {
+          book.locations.generate(2000).then(function () {
             reactNativeWebview.postMessage(JSON.stringify({
               type: "onLocationsReady",
               epubKey: book.key(),
               locations: book.locations.save(),
               totalLocations: book.locations.total,
               currentLocation: rendition.currentLocation(),
-              progress: book.locations.percentageFromCfi(rendition.currentLocation().start.cfi),
+              currentLocation: rendition.currentLocation(),
+              progress: getProgress(rendition.currentLocation()),
             }));
           });
         })
         .then(function () {
-          var displayed = rendition.display();
+           reactNativeWebview.postMessage(JSON.stringify({ type: "debug", message: "Displaying rendition" }));
+           var displayed = rendition.display(initialLocation || undefined);
 
           displayed.then(function () {
             var currentLocation = rendition.currentLocation();
@@ -227,7 +275,9 @@ export default `
               type: "onReady",
               totalLocations: book.locations.total,
               currentLocation: currentLocation,
-              progress: book.locations.percentageFromCfi(currentLocation.start.cfi),
+              totalLocations: book.locations.total,
+              currentLocation: currentLocation,
+              progress: getProgress(currentLocation),
             }));
           });
 
@@ -281,7 +331,7 @@ export default `
         .catch(function (err) {
           reactNativeWebview.postMessage(JSON.stringify({
           type: "onDisplayError",
-          reason: reason
+          reason: err?.message || err
         }));
       });
 
@@ -319,8 +369,8 @@ export default `
       });
 
       rendition.on("relocated", function (location) {
-        var percent = book.locations.percentageFromCfi(location.start.cfi);
-        var percentage = Math.floor(percent * 100);
+        var percent = getProgress(location);
+        var percentage = percent;
         var chapter = getChapter(location);
 
         reactNativeWebview.postMessage(JSON.stringify({
@@ -389,6 +439,8 @@ export default `
           }));
         }
       });
+
+
 
       rendition.on("resized", function (layout) {
         reactNativeWebview.postMessage(JSON.stringify({

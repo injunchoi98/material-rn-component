@@ -25,6 +25,7 @@ export function View({
   onResized = () => { },
   onLocationChange = () => { },
   onRendered = () => { },
+  onChangeSection = () => { },
   onSearch = () => { },
   onLocationsReady = () => { },
   onSelected = () => { },
@@ -34,19 +35,14 @@ export function View({
   onNavigationLoaded = () => { },
   onBeginning = () => { },
   onFinish = () => { },
-  onPress = () => { },
-  onSingleTap = () => { },
-  onDoublePress = () => { },
-  onDoubleTap = () => { },
-  onLongPress = () => { },
+
   width,
   height,
   initialLocation,
   enableSwipe = true,
   onSwipeLeft = () => { },
   onSwipeRight = () => { },
-  onSwipeUp = () => { },
-  onSwipeDown = () => { },
+
   defaultTheme = initialTheme,
   renderOpeningBookComponent = () => (
     <OpeningBook
@@ -102,6 +98,9 @@ export function View({
   setBookmarks,
   bookmarks,
   setIsSearching,
+  addBookmark,
+  removeBookmark,
+  updateBookmark,
 
 }: ViewProps) {
   const book = useRef<WebView>(null);
@@ -118,8 +117,10 @@ export function View({
 
   const onMessage = (event: WebViewMessageEvent) => {
     const parsedEvent = JSON.parse(event.nativeEvent.data);
-
     const { type } = parsedEvent;
+
+    const msg = JSON.stringify(parsedEvent);
+    //console.log('WebView Message:', type, msg.length > 100 ? msg.slice(0, 1000) + '...' : msg);
 
     if (!INTERNAL_EVENTS.includes(type) && onWebViewMessage) {
       return onWebViewMessage(parsedEvent);
@@ -146,13 +147,7 @@ export function View({
         setIsRendering(false);
       }
 
-      if (initialAnnotations) {
-        setInitialAnnotations(initialAnnotations);
-      }
 
-      if (initialLocation) {
-        goToLocation(initialLocation);
-      }
 
       if (injectedJavascript) {
         book.current?.injectJavaScript(injectedJavascript);
@@ -274,7 +269,6 @@ export function View({
 
     if (type === 'onAddAnnotation') {
       const { annotation } = parsedEvent;
-
       return onAddAnnotation(annotation);
     }
 
@@ -292,46 +286,41 @@ export function View({
 
     if (type === 'onPressAnnotation') {
       const { annotation } = parsedEvent;
-
       return onPressAnnotation(annotation);
     }
 
     if (type === 'onAddBookmark') {
       const { bookmark } = parsedEvent;
-
-      setBookmarks([...bookmarks, bookmark]);
-      onAddBookmark(bookmark);
-      return onChangeBookmarks([...bookmarks, bookmark]);
+      addBookmark(bookmark);
+      return onAddBookmark(bookmark);
     }
 
     if (type === 'onRemoveBookmark') {
       const { bookmark } = parsedEvent;
-
-      onRemoveBookmark(bookmark);
-
-      return onChangeBookmarks(
-        bookmarks.filter(({ id }) => id !== bookmark.id)
-      );
+      removeBookmark(bookmark);
+      return onRemoveBookmark(bookmark);
     }
 
     if (type === 'onRemoveBookmarks') {
-      return onChangeBookmarks([]);
+      setBookmarks([]);
+      return;
     }
 
     if (type === 'onUpdateBookmark') {
       const { bookmark } = parsedEvent;
-      const Bookmarks = bookmarks;
-
-      const index = Bookmarks.findIndex((item) => item.id === bookmark.id);
-      Bookmarks[index] = bookmark;
-
-      onUpdateBookmark(bookmark);
-      return onChangeBookmarks(Bookmarks);
+      updateBookmark(bookmark);
+      return onUpdateBookmark(bookmark);
     }
+
+
 
     return () => { };
   };
 
+  /**
+   * Handles selection of custom menu items (e.g., "Highlight", "Note").
+   * Executed when a user selects an option from the text selection menu.
+   */
   const handleOnCustomMenuSelection = (event: {
     nativeEvent: {
       label: string;
@@ -353,6 +342,10 @@ export function View({
     });
   };
 
+  /**
+   * Intercepts navigation requests from the WebView.
+   * Instead of loading a new page, it triggers the internal `goToLocation` to change chapters smoothly.
+   */
   const handleOnShouldStartLoadWithRequest = (
     request: ShouldStartLoadRequest
   ) => {
@@ -364,21 +357,17 @@ export function View({
       goToLocation(request.url.replace(request.mainDocumentURL, ''));
     }
 
-    if (
-      (request.url.includes('mailto:') || request.url.includes('tel:')) &&
-      onPressExternalLink
-    ) {
-      onPressExternalLink(request.url);
-    }
+
 
     return true;
   };
 
-  useEffect(() => {
-    if (initialBookmarks) {
-      setBookmarks(initialBookmarks);
-    }
-  }, [initialBookmarks, setBookmarks]);
+
+
+  /**
+   * Registers the WebView instance with the useBook hook.
+   * This bridge is essential for the hook to control the WebView (e.g., changing themes, navigation).
+   */
 
   useEffect(() => {
     if (book.current) registerBook(book.current);
@@ -388,15 +377,7 @@ export function View({
     <GestureHandler
       width={width}
       height={height}
-      onSingleTap={() => {
-        onPress();
-        onSingleTap();
-      }}
-      onDoubleTap={() => {
-        onDoublePress();
-        onDoubleTap();
-      }}
-      onLongPress={onLongPress}
+
       onSwipeLeft={() => {
         if (enableSwipe) {
           goNext({
@@ -411,16 +392,6 @@ export function View({
             keepScrollOffset: keepScrollOffsetOnLocationChange,
           });
           onSwipeRight();
-        }
-      }}
-      onSwipeUp={() => {
-        if (enableSwipe) {
-          onSwipeUp();
-        }
-      }}
-      onSwipeDown={() => {
-        if (enableSwipe) {
-          onSwipeDown();
         }
       }}
     >
@@ -444,6 +415,7 @@ export function View({
         originWhitelist={['*']}
         scrollEnabled={false}
         nestedScrollEnabled={Platform.OS === 'android' ? true : undefined}
+        overScrollMode="never"
         mixedContentMode="compatibility"
         onMessage={onMessage}
         menuItems={menuItems?.map((item, key) => ({
@@ -458,10 +430,6 @@ export function View({
         javaScriptCanOpenWindowsAutomatically
         onOpenWindow={(event) => {
           event.preventDefault();
-
-          if (onPressExternalLink) {
-            onPressExternalLink(event.nativeEvent.targetUrl);
-          }
         }}
         onShouldStartLoadWithRequest={handleOnShouldStartLoadWithRequest}
         style={{
